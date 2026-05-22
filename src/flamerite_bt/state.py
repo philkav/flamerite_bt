@@ -15,15 +15,16 @@ from .const import (
 class State:
     """Representation of the Flamerite device state."""
 
-    is_on: bool
+    is_powered_on: bool
     heat_mode: HeatMode
     thermostat: int
     flame_color: Color
     fuel_color: Color
     flame_brightness: int
     fuel_brightness: int
+    accepts_short_ack_state: bool
 
-    def __init__(self) -> None:
+    def __init__(self, accepts_short_ack_state: bool = False) -> None:
         self.is_powered_on = False
         self.heat_mode = HeatMode.OFF
         self.thermostat = THERMOSTAT_MIN
@@ -31,6 +32,7 @@ class State:
         self.fuel_color = Color.ORANGE_1
         self.flame_brightness = BRIGHTNESS_MIN
         self.fuel_brightness = BRIGHTNESS_MIN
+        self.accepts_short_ack_state = accepts_short_ack_state
 
     def update_from_bytes(self, data: bytearray) -> bool:
         """Update state from raw byte data read from the device.
@@ -48,6 +50,10 @@ class State:
         # exactly 7 bytes.
         exp_res_payload_len = 7
         state_payload = data[2:]
+
+        if len(state_payload) == 2 and self.accepts_short_ack_state:
+            return True
+
         if len(state_payload) != exp_res_payload_len:
             return False
 
@@ -63,7 +69,9 @@ class State:
         # [6] fuel color
         self.is_powered_on = int(state_payload[0]) > 0x0A
         self.heat_mode = (
-            HeatMode(int(state_payload[0])) if self.is_powered_on else HeatMode.OFF
+            HeatMode(int(state_payload[0]))
+            if self.is_powered_on
+            else HeatMode.OFF
         )
         self.thermostat = clamp(
             int(state_payload[2]) + 16, THERMOSTAT_MIN, THERMOSTAT_MAX
@@ -74,13 +82,19 @@ class State:
         self.fuel_brightness = clamp(
             1 + int(state_payload[4]), BRIGHTNESS_MIN, BRIGHTNESS_MAX
         )
-        self.flame_color = Color(clamp(int(state_payload[5]), COLOR_MIN, COLOR_MAX))
-        self.fuel_color = Color(clamp(int(state_payload[6]), COLOR_MIN, COLOR_MAX))
+        self.flame_color = Color(
+            clamp(int(state_payload[5]), COLOR_MIN, COLOR_MAX)
+        )
+        self.fuel_color = Color(
+            clamp(int(state_payload[6]), COLOR_MIN, COLOR_MAX)
+        )
         return True
 
     def set_thermostat(self, temperature_celsius: int) -> None:
         """Set the thermostat temperature in Celsius."""
-        self.thermostat = clamp(temperature_celsius, THERMOSTAT_MIN, THERMOSTAT_MAX)
+        self.thermostat = clamp(
+            temperature_celsius, THERMOSTAT_MIN, THERMOSTAT_MAX
+        )
 
     def set_fuel_brightness(self, brightness: int) -> None:
         """Set the fuel brightness level (1-10)."""
@@ -88,7 +102,9 @@ class State:
 
     def set_flame_brightness(self, brightness: int) -> None:
         """Set the flame brightness level (1-10)."""
-        self.flame_brightness = clamp(brightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX)
+        self.flame_brightness = clamp(
+            brightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX
+        )
 
     def __str__(self):
         return (

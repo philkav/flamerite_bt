@@ -33,7 +33,9 @@ async def scan_for_flamerite_devices(
         if not Device.is_supported_device(ble_advertisement_data):
             return
 
-        already_seen = [d for d in device_list if d.address == ble_device.address]
+        already_seen = [
+            d for d in device_list if d.address == ble_device.address
+        ]
         if len(already_seen) > 0:
             return
 
@@ -48,7 +50,9 @@ async def scan_for_flamerite_devices(
     # required number of devices is found.
     async with BleakScanner(_detection_callback):
         try:
-            await asyncio.wait_for(scan_done.wait(), timeout=scan_timeout_seconds)
+            await asyncio.wait_for(
+                scan_done.wait(), timeout=scan_timeout_seconds
+            )
         except asyncio.TimeoutError:
             # Timeout elapsed; proceed with whatever devices were found.
             pass

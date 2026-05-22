@@ -43,7 +43,9 @@ class TestState(unittest.TestCase):
                     "Fuel Brightness 10, Cycle Variation 1 for Flame Color, "
                     "Cycle variation 5 for Fuel Color"
                 ),
-                data=bytearray([0x20, 0x07, 0x0A, 0xA1, 0x00, 0x00, 0x09, 0x14, 0x18]),
+                data=bytearray(
+                    [0x20, 0x07, 0x0A, 0xA1, 0x00, 0x00, 0x09, 0x14, 0x18]
+                ),
                 expected=ExpectedState(
                     is_powered_on=False,
                     heat_mode=HeatMode.OFF,
@@ -60,7 +62,9 @@ class TestState(unittest.TestCase):
                     "Fuel Brightness 10, Cycle Variation 1 for Flame Color, "
                     "Cycle variation 5 for Fuel Color"
                 ),
-                data=bytearray([0x20, 0x07, 0x0B, 0xA1, 0x00, 0x00, 0x09, 0x14, 0x18]),
+                data=bytearray(
+                    [0x20, 0x07, 0x0B, 0xA1, 0x00, 0x00, 0x09, 0x14, 0x18]
+                ),
                 expected=ExpectedState(
                     is_powered_on=True,
                     heat_mode=HeatMode.OFF,
@@ -76,7 +80,9 @@ class TestState(unittest.TestCase):
                     "Power ON, Low Heat, Thermostat 22, Flame Brightness 6, "
                     "Fuel Brightness 4, Flame Color 2, Fuel Color 1"
                 ),
-                data=bytearray([0x20, 0x07, 0x0C, 0xA1, 0x06, 0x05, 0x03, 0x02, 0x01]),
+                data=bytearray(
+                    [0x20, 0x07, 0x0C, 0xA1, 0x06, 0x05, 0x03, 0x02, 0x01]
+                ),
                 expected=ExpectedState(
                     is_powered_on=True,
                     heat_mode=HeatMode.LOW,
@@ -92,7 +98,9 @@ class TestState(unittest.TestCase):
                     "Power ON, High Heat, Thermostat 22, Flame Brightness 6, "
                     "Fuel Brightness 4, Flame Color 2, Fuel Color 1"
                 ),
-                data=bytearray([0x20, 0x07, 0x0D, 0xA1, 0x06, 0x05, 0x03, 0x02, 0x01]),
+                data=bytearray(
+                    [0x20, 0x07, 0x0D, 0xA1, 0x06, 0x05, 0x03, 0x02, 0x01]
+                ),
                 expected=ExpectedState(
                     is_powered_on=True,
                     heat_mode=HeatMode.HIGH,
@@ -110,11 +118,17 @@ class TestState(unittest.TestCase):
                 state = State()
                 result = state.update_from_bytes(spec.data)
                 self.assertTrue(result)
-                self.assertEqual(state.is_powered_on, spec.expected.is_powered_on)
+                self.assertEqual(
+                    state.is_powered_on, spec.expected.is_powered_on
+                )
                 self.assertEqual(state.heat_mode, spec.expected.heat_mode)
                 self.assertEqual(state.thermostat, spec.expected.thermostat)
-                self.assertEqual(state.flame_brightness, spec.expected.flame_brightness)
-                self.assertEqual(state.fuel_brightness, spec.expected.fuel_brightness)
+                self.assertEqual(
+                    state.flame_brightness, spec.expected.flame_brightness
+                )
+                self.assertEqual(
+                    state.fuel_brightness, spec.expected.fuel_brightness
+                )
                 self.assertEqual(state.flame_color, spec.expected.flame_color)
                 self.assertEqual(state.fuel_color, spec.expected.fuel_color)
 
@@ -131,11 +145,15 @@ class TestState(unittest.TestCase):
             ),
             Spec(
                 descr="Incorrect response type",
-                data=bytearray([0x21, 0x07, 0x0B, 0xA1, 0x00, 0x00, 0x09, 0x14, 0x18]),
+                data=bytearray(
+                    [0x21, 0x07, 0x0B, 0xA1, 0x00, 0x00, 0x09, 0x14, 0x18]
+                ),
             ),
             Spec(
                 descr="Incorrect payload length",
-                data=bytearray([0x20, 0x06, 0x0B, 0xA1, 0x00, 0x00, 0x09, 0x14]),
+                data=bytearray(
+                    [0x20, 0x06, 0x0B, 0xA1, 0x00, 0x00, 0x09, 0x14]
+                ),
             ),
         ]
 
@@ -144,3 +162,13 @@ class TestState(unittest.TestCase):
                 state = State()
                 result = state.update_from_bytes(spec.data)
                 self.assertFalse(result)
+
+    def test_state_short_ack_response_handling(self) -> None:
+        """Short ACK frames are only accepted when enabled."""
+        data = bytearray(b" \x02\n\xa1")
+
+        state = State()
+        self.assertFalse(state.update_from_bytes(data))
+
+        state = State(accepts_short_ack_state=True)
+        self.assertTrue(state.update_from_bytes(data))

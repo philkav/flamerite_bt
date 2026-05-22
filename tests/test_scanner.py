@@ -35,12 +35,16 @@ class TestScanner(unittest.TestCase):
         FakeBleakScanner.last_instance = None
 
     def test_finds_supported_device(self) -> None:
-        with mock.patch("flamerite_bt.scanner.BleakScanner", new=FakeBleakScanner):
+        with mock.patch(
+            "flamerite_bt.scanner.BleakScanner", new=FakeBleakScanner
+        ):
 
             async def run():
                 # Run scan in a task so we can invoke the callback while it's waiting.
                 task = asyncio.create_task(
-                    scan_for_flamerite_devices(scan_timeout_seconds=1, max_devices=1)
+                    scan_for_flamerite_devices(
+                        scan_timeout_seconds=1, max_devices=1
+                    )
                 )
 
                 # Wait for the fake scanner to be constructed inside the function.
@@ -71,21 +75,29 @@ class TestScanner(unittest.TestCase):
             asyncio.run(run())
 
     def test_ignores_non_supported(self) -> None:
-        with mock.patch("flamerite_bt.scanner.BleakScanner", new=FakeBleakScanner):
+        with mock.patch(
+            "flamerite_bt.scanner.BleakScanner", new=FakeBleakScanner
+        ):
 
             async def run():
                 # Short timeout so the test completes quickly when nothing is found.
-                devices = await scan_for_flamerite_devices(scan_timeout_seconds=1)
+                devices = await scan_for_flamerite_devices(
+                    scan_timeout_seconds=1
+                )
                 self.assertEqual(devices, [])
 
             asyncio.run(run())
 
     def test_ignores_duplicates(self) -> None:
-        with mock.patch("flamerite_bt.scanner.BleakScanner", new=FakeBleakScanner):
+        with mock.patch(
+            "flamerite_bt.scanner.BleakScanner", new=FakeBleakScanner
+        ):
 
             async def run():
                 task = asyncio.create_task(
-                    scan_for_flamerite_devices(scan_timeout_seconds=1, max_devices=-1)
+                    scan_for_flamerite_devices(
+                        scan_timeout_seconds=1, max_devices=-1
+                    )
                 )
 
                 while FakeBleakScanner.last_instance is None:

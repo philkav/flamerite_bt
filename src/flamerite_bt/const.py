@@ -1,11 +1,12 @@
 """Constants for the Flamerite Bluetooth integration."""
 
+from dataclasses import dataclass
 from enum import Enum, IntEnum
 
 # The maximum time to wait for a response from the device when querying its state.
 DEVICE_RESPONSE_TIMEOUT_SECONDS = 5
 
-SUPPORTED_DEVICE_NAMES = ["NITRAFlame"]
+SUPPORTED_DEVICE_NAMES = ["NITRAFlame", "Flamerite"]
 SUPPORTED_DEVICE_SVC_UUIDS = ["0000fff0-0000-1000-8000-00805f9b34fb"]
 
 
@@ -95,6 +96,32 @@ BRIGHTNESS_MIN = 1
 BRIGHTNESS_MAX = 10
 COLOR_MIN = Color.ORANGE_1.value
 COLOR_MAX = Color.CYCLE_ORANGE_ONLY.value
+
+
+@dataclass(frozen=True)
+class CommandProfile:
+    """Command mapping for a supported Flamerite device family."""
+
+    power_on: bytes | None
+    power_off: bytes | None
+    power_toggle: bytes | None
+    accepts_short_ack_state: bool = False
+
+
+NITRAFLAME_PROFILE = CommandProfile(
+    power_on=None,
+    power_off=None,
+    power_toggle=bytes.fromhex("a10100"),
+    accepts_short_ack_state=False,
+)
+
+
+ARCTECH_FOTH_PROFILE = CommandProfile(
+    power_on=bytes.fromhex("a101ff"),
+    power_off=bytes.fromhex("a10100"),
+    power_toggle=None,
+    accepts_short_ack_state=True,
+)
 
 
 # Commands that can be sent to the device.

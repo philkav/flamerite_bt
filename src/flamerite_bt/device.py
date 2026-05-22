@@ -12,11 +12,14 @@ from bleak_retry_connector import BleakClient  # type: ignore
 from bleak_retry_connector import establish_connection
 
 from .const import (
+    ARCTECH_FOTH_PROFILE,
     DEVICE_RESPONSE_TIMEOUT_SECONDS,
+    NITRAFLAME_PROFILE,
     SUPPORTED_DEVICE_NAMES,
     SUPPORTED_DEVICE_SVC_UUIDS,
     Color,
     Command,
+    CommandProfile,
     DeviceAttribute,
     HeatMode,
 )
@@ -29,6 +32,7 @@ class Device:
     """A wrapper class to interact with Flamerite Bluetooth devices."""
 
     _ble_device: BLEDevice
+    _command_profile: CommandProfile
     _connection: BleakClient
     _connection_lock = asyncio.Lock()
     _is_connected: bool
@@ -44,22 +48,33 @@ class Device:
 
     def __init__(self, ble_device: BLEDevice) -> None:
         self._ble_device = ble_device
+        self._command_profile = NITRAFLAME_PROFILE
         self._is_connected = False
         self._mac = ble_device.address
         self._name = ble_device.name or ""
-        self._state = State()
+        self._state = State(accepts_short_ack_state=False)
 
     @staticmethod
     def is_supported_device(advertisment_data: AdvertisementData) -> bool:
         """Returns True if the device class supports the device identified by
         advertisement data."""
-        device_name = advertisment_data.local_name or ""
+        device_name = (advertisment_data.local_name or "").strip()
         if device_name not in SUPPORTED_DEVICE_NAMES:
             return False
         for svc_uuid in SUPPORTED_DEVICE_SVC_UUIDS:
             if svc_uuid in advertisment_data.service_uuids:
                 return True
         return False
+
+    def _detect_command_profile(self) -> CommandProfile:
+        """Detect the command profile for the connected device."""
+        manufacturer = self._manufacturer.strip().upper()
+        model_number = self._model_number.strip().upper()
+
+        if manufacturer == "ARCTECH" and model_number in {"FOTH", "F0TH"}:
+            return ARCTECH_FOTH_PROFILE
+
+        return NITRAFLAME_PROFILE
 
     def disconnected_callback(self, client):  # pylint: disable=unused-argument
         """Handle disconnection events."""
@@ -88,13 +103,25 @@ class Device:
 
                 self._is_connected = True
 
-                self._model_number = await self._read_attr(DeviceAttribute.MODEL_NUMBER)
+                self._model_number = await self._read_attr(
+                    DeviceAttribute.MODEL_NUMBER
+                )
                 self._serial_number = await self._read_attr(
                     DeviceAttribute.SERIAL_NUMBER
                 )
-                self._manufacturer = await self._read_attr(DeviceAttribute.MANUFACTURER)
-                self._fw_revision = await self._read_attr(DeviceAttribute.FW_REVISION)
-                self._hw_revision = await self._read_attr(DeviceAttribute.HW_REVISION)
+                self._manufacturer = await self._read_attr(
+                    DeviceAttribute.MANUFACTURER
+                )
+                self._fw_revision = await self._read_attr(
+                    DeviceAttribute.FW_REVISION
+                )
+                self._hw_revision = await self._read_attr(
+                    DeviceAttribute.HW_REVISION
+                )
+                self._command_profile = self._detect_command_profile()
+                self._state.accepts_short_ack_state = (
+                    self._command_profile.accepts_short_ack_state
+                )
 
                 _LOGGER.info(
                     (
@@ -141,24 +168,26 @@ class Device:
             await self._send_cmd(Command.QUERY_STATE.value)
             try:
                 await asyncio.wait_for(
-                    self._state_updated.wait(), timeout=DEVICE_RESPONSE_TIMEOUT_SECONDS
+                    self._state_updated.wait(),
+                    timeout=DEVICE_RESPONSE_TIMEOUT_SECONDS,
                 )
             except asyncio.TimeoutError:
-                _LOGGER.error("Timeout waiting for state response from %s", self._mac)
+                _LOGGER.error(
+                    "Timeout waiting for state response from %s", self._mac
+                )
                 pass
 
-    def _on_notify(self, char: BleakGATTCharacteristic, data: bytearray) -> None:
+    def _on_notify(
+        self, char: BleakGATTCharacteristic, data: bytearray
+    ) -> None:
         """Notification handler which updates the device state."""
         if self._state.update_from_bytes(data):
             self._state_updated.set()
 
     async def _read_attr(self, attr: DeviceAttribute) -> str:
-        """Read and decode the value of a device attribute."""
-        return (
-            (await self._connection.read_gatt_char(attr.value))
-            .decode("utf-8")
-            .strip("\x00")
-        )
+        """Read a device attribute."""
+        raw = await self._connection.read_gatt_char(attr.value)
+        return raw.decode("utf-8", errors="ignore").strip("\x00")
 
     async def _send_cmd(self, cmd_bytes: bytes) -> None:
         """Send a command to the device."""
@@ -217,13 +246,27 @@ class Device:
             await self.connect(retry_attempts=1)
 
         async with self._state_lock:
+            profile = self._command_profile
+
+            if profile.power_on is not None and profile.power_off is not None:
+                self._state.is_powered_on = value
+                await self._send_cmd(
+                    profile.power_on if value else profile.power_off
+                )
+                return
+
             old_value = self._state.is_powered_on
             self._state.is_powered_on = value
 
-            # Toggle power only if the state has changed.
             if old_value == value:
                 return
-            await self._send_cmd(Command.POWER_TOGGLE.value)
+
+            if profile.power_toggle is None:
+                raise RuntimeError(
+                    "Device profile does not define a power command"
+                )
+
+            await self._send_cmd(profile.power_toggle)
 
     @property
     def heat_mode(self) -> HeatMode:
@@ -275,7 +318,9 @@ class Device:
         async with self._state_lock:
             if not self.is_powered_on and mode != HeatMode.OFF:
                 # Cannot set heat mode if the device is powered off.
-                _LOGGER.warning("Cannot set heat mode when device is powered off")
+                _LOGGER.warning(
+                    "Cannot set heat mode when device is powered off"
+                )
                 return
 
             old_value = self._state.heat_mode
@@ -329,7 +374,8 @@ class Device:
                 return
 
             await self._send_cmd(
-                Command.SET_FLAME_COLOR.value + bytes([self._state.flame_color.value])
+                Command.SET_FLAME_COLOR.value
+                + bytes([self._state.flame_color.value])
             )
 
     @property
@@ -351,7 +397,8 @@ class Device:
                 return
 
             await self._send_cmd(
-                Command.SET_FUEL_COLOR.value + bytes([self._state.fuel_color.value])
+                Command.SET_FUEL_COLOR.value
+                + bytes([self._state.fuel_color.value])
             )
 
     @property
