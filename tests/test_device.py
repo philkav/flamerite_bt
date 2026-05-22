@@ -9,6 +9,7 @@ from bleak_retry_connector import BleakClient  # type: ignore
 from bleak_retry_connector import establish_connection
 
 from flamerite_bt.const import (
+    ARCTECH_FOTH_PROFILE,
     THERMOSTAT_MAX,
     THERMOSTAT_MIN,
     Color,
@@ -28,8 +29,12 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(device.name, "Flamerite Test Device")
 
         client_stub = self._bleak_client_stub()
-        connect_stub = AsyncMock(spec=establish_connection, return_value=client_stub)
-        with patch("flamerite_bt.device.establish_connection", new=connect_stub):
+        connect_stub = AsyncMock(
+            spec=establish_connection, return_value=client_stub
+        )
+        with patch(
+            "flamerite_bt.device.establish_connection", new=connect_stub
+        ):
 
             async def run_connect():
                 await device.connect()
@@ -50,8 +55,12 @@ class TestDevice(unittest.TestCase):
 
         client_stub = self._bleak_client_stub()
         client_stub.write_gatt_char = AsyncMock()
-        connect_stub = AsyncMock(spec=establish_connection, return_value=client_stub)
-        with patch("flamerite_bt.device.establish_connection", new=connect_stub):
+        connect_stub = AsyncMock(
+            spec=establish_connection, return_value=client_stub
+        )
+        with patch(
+            "flamerite_bt.device.establish_connection", new=connect_stub
+        ):
 
             async def run_query_state():
                 # Calling query state without an active connection should automatically
@@ -61,7 +70,9 @@ class TestDevice(unittest.TestCase):
                 # Simulate a notification being received after a short delay.
                 device._on_notify(
                     Mock(spec=BleakGATTCharacteristic),
-                    bytearray([0x20, 0x07, 0x0C, 0xA1, 0x00, 0x09, 0x09, 0x00, 0x18]),
+                    bytearray(
+                        [0x20, 0x07, 0x0C, 0xA1, 0x00, 0x09, 0x09, 0x00, 0x18]
+                    ),
                 )
 
                 # Wait for the query_state call to complete.
@@ -125,15 +136,88 @@ class TestDevice(unittest.TestCase):
                         if spec.is_powered_on:
                             device._state.is_powered_on = True
                         await device.set_powered_on(spec.new_powered_on)
-                        self.assertEqual(device.is_powered_on, spec.new_powered_on)
+                        self.assertEqual(
+                            device.is_powered_on, spec.new_powered_on
+                        )
 
                     asyncio.run(run_set_powered_on())
                     client_stub.write_gatt_char.assert_has_awaits(
                         [
-                            call(DeviceAttribute.CMD_REQUEST.value, cmd, response=True)
+                            call(
+                                DeviceAttribute.CMD_REQUEST.value,
+                                cmd,
+                                response=True,
+                            )
                             for cmd in spec.exp_commands
                         ],
                     )
+
+    def test_set_powered_on_arctech_foth_profile(self) -> None:
+        """ARCTECH/FOTH devices use explicit power on/off commands."""
+
+        @dataclass
+        class Spec:
+            descr: str
+            is_powered_on: bool
+            new_powered_on: bool
+            exp_commands: list[bytes]
+
+        specs = [
+            Spec(
+                descr="OFF -> ON",
+                is_powered_on=False,
+                new_powered_on=True,
+                exp_commands=[bytes.fromhex("a101ff")],
+            ),
+            Spec(
+                descr="ON -> OFF",
+                is_powered_on=True,
+                new_powered_on=False,
+                exp_commands=[bytes.fromhex("a10100")],
+            ),
+            Spec(
+                descr="Send ON command even when already ON",
+                is_powered_on=True,
+                new_powered_on=True,
+                exp_commands=[bytes.fromhex("a101ff")],
+            ),
+            Spec(
+                descr="Send OFF command even when already OFF",
+                is_powered_on=False,
+                new_powered_on=False,
+                exp_commands=[bytes.fromhex("a10100")],
+            ),
+        ]
+
+        for spec in specs:
+            with self.subTest(spec.descr):
+                ble_device = self._ble_device_mock()
+                device = Device(ble_device)
+                device._command_profile = ARCTECH_FOTH_PROFILE
+
+                client_stub = self._bleak_client_stub()
+                client_stub.write_gatt_char = AsyncMock()
+
+                device._connection = client_stub
+                device._is_connected = True
+
+                async def run_set_powered_on():
+                    device._state.is_powered_on = spec.is_powered_on
+                    await device.set_powered_on(spec.new_powered_on)
+                    self.assertEqual(device.is_powered_on, spec.new_powered_on)
+
+                asyncio.run(run_set_powered_on())
+
+                client_stub.write_gatt_char.assert_has_awaits(
+                    [
+                        call(
+                            DeviceAttribute.CMD_REQUEST.value,
+                            cmd,
+                            response=True,
+                        )
+                        for cmd in spec.exp_commands
+                    ],
+                )
 
     def test_set_heat_mode(self) -> None:
         @dataclass
@@ -196,7 +280,10 @@ class TestDevice(unittest.TestCase):
                 cur_heat_mode=HeatMode.OFF,
                 new_heat_mode=HeatMode.HIGH,
                 exp_heat_mode=HeatMode.HIGH,
-                exp_commands=[Command.SET_HEAT_LOW.value, Command.SET_HEAT_HIGH.value],
+                exp_commands=[
+                    Command.SET_HEAT_LOW.value,
+                    Command.SET_HEAT_HIGH.value,
+                ],
             ),
             Spec(
                 descr="HIGH -> LOW",
@@ -215,7 +302,10 @@ class TestDevice(unittest.TestCase):
                 exp_heat_mode=HeatMode.OFF,
                 # Sending HIGH when in HIGH switches to LOW;
                 # then send another LOW to turn off.
-                exp_commands=[Command.SET_HEAT_HIGH.value, Command.SET_HEAT_LOW.value],
+                exp_commands=[
+                    Command.SET_HEAT_HIGH.value,
+                    Command.SET_HEAT_LOW.value,
+                ],
             ),
         ]
 
@@ -243,7 +333,11 @@ class TestDevice(unittest.TestCase):
                     asyncio.run(run_set_heat_mode())
                     client_stub.write_gatt_char.assert_has_awaits(
                         [
-                            call(DeviceAttribute.CMD_REQUEST.value, cmd, response=True)
+                            call(
+                                DeviceAttribute.CMD_REQUEST.value,
+                                cmd,
+                                response=True,
+                            )
                             for cmd in spec.exp_commands
                         ],
                     )
@@ -265,7 +359,8 @@ class TestDevice(unittest.TestCase):
                     expCalls = [
                         call(
                             DeviceAttribute.CMD_REQUEST.value,
-                            Command.SET_FLAME_COLOR.value + bytes([color.value]),
+                            Command.SET_FLAME_COLOR.value
+                            + bytes([color.value]),
                             response=True,
                         )
                     ]
@@ -389,7 +484,9 @@ class TestDevice(unittest.TestCase):
                     async def run_set_brightness():
                         device._state.flame_brightness = spec.cur_brightness
                         await device.set_flame_brightness(spec.new_brightness)
-                        self.assertEqual(device.flame_brightness, spec.new_brightness)
+                        self.assertEqual(
+                            device.flame_brightness, spec.new_brightness
+                        )
 
                     asyncio.run(run_set_brightness())
 
@@ -479,7 +576,9 @@ class TestDevice(unittest.TestCase):
                     async def run_set_brightness():
                         device._state.fuel_brightness = spec.cur_brightness
                         await device.set_fuel_brightness(spec.new_brightness)
-                        self.assertEqual(device.fuel_brightness, spec.new_brightness)
+                        self.assertEqual(
+                            device.fuel_brightness, spec.new_brightness
+                        )
 
                     asyncio.run(run_set_brightness())
 
@@ -565,7 +664,9 @@ class TestDevice(unittest.TestCase):
     def _bleak_client_stub(self) -> AsyncMock:
         """Create a minimal mock BleakClient for use in tests."""
         client_stub = AsyncMock(spec=BleakClient)
-        client_stub.read_gatt_char = AsyncMock(side_effect=self._read_attr_side_effect)
+        client_stub.read_gatt_char = AsyncMock(
+            side_effect=self._read_attr_side_effect
+        )
         client_stub.start_notify = AsyncMock()
         client_stub.disconnect = AsyncMock()
         return client_stub
