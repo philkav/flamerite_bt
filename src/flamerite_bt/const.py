@@ -121,7 +121,7 @@ NITRAFLAME_PROFILE = CommandProfile(
 )
 
 
-ARCTECH_FOTH_PROFILE = CommandProfile(
+ARCTECH_PROFILE = CommandProfile(
     power_on=bytes.fromhex("a101ff"),
     power_off=bytes.fromhex("a10100"),
     power_toggle=None,

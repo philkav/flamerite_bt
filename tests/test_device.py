@@ -9,7 +9,8 @@ from bleak_retry_connector import BleakClient  # type: ignore
 from bleak_retry_connector import establish_connection
 
 from flamerite_bt.const import (
-    ARCTECH_FOTH_PROFILE,
+    ARCTECH_PROFILE,
+    NITRAFLAME_PROFILE,
     THERMOSTAT_MAX,
     THERMOSTAT_MIN,
     Color,
@@ -152,8 +153,8 @@ class TestDevice(unittest.TestCase):
                         ],
                     )
 
-    def test_set_powered_on_arctech_foth_profile(self) -> None:
-        """ARCTECH/FOTH devices use explicit power on/off commands."""
+    def test_set_powered_on_arctech_profile(self) -> None:
+        """ARCTECH devices use explicit power on/off commands."""
 
         @dataclass
         class Spec:
@@ -193,7 +194,7 @@ class TestDevice(unittest.TestCase):
             with self.subTest(spec.descr):
                 ble_device = self._ble_device_mock()
                 device = Device(ble_device)
-                device._command_profile = ARCTECH_FOTH_PROFILE
+                device._command_profile = ARCTECH_PROFILE
 
                 client_stub = self._bleak_client_stub()
                 client_stub.write_gatt_char = AsyncMock()
@@ -207,6 +208,145 @@ class TestDevice(unittest.TestCase):
                     self.assertEqual(device.is_powered_on, spec.new_powered_on)
 
                 asyncio.run(run_set_powered_on())
+
+                client_stub.write_gatt_char.assert_has_awaits(
+                    [
+                        call(
+                            DeviceAttribute.CMD_REQUEST.value,
+                            cmd,
+                            response=True,
+                        )
+                        for cmd in spec.exp_commands
+                    ],
+                )
+
+    def test_set_heat_mode_arctech_profile_uses_current_thermostat(
+        self,
+    ) -> None:
+        """ARCTECH heat on sends the current thermostat after enabling heat."""
+        ble_device = self._ble_device_mock()
+        device = Device(ble_device)
+        device._command_profile = ARCTECH_PROFILE
+        device._state.is_powered_on = True
+        device._state.heat_mode = HeatMode.OFF
+        device._state.thermostat = THERMOSTAT_MAX
+
+        client_stub = self._bleak_client_stub()
+        client_stub.write_gatt_char = AsyncMock()
+
+        device._connection = client_stub
+        device._is_connected = True
+
+        async def run_set_heat_mode():
+            await device.set_heat_mode(HeatMode.LOW)
+            self.assertEqual(device.heat_mode, HeatMode.LOW)
+
+        asyncio.run(run_set_heat_mode())
+
+        client_stub.write_gatt_char.assert_has_awaits(
+            [
+                call(
+                    DeviceAttribute.CMD_REQUEST.value,
+                    ARCTECH_PROFILE.heat_on,
+                    response=True,
+                ),
+                call(
+                    DeviceAttribute.CMD_REQUEST.value,
+                    Command.SET_THERMOSTAT.value + bytes([THERMOSTAT_MAX]),
+                    response=True,
+                ),
+            ],
+        )
+
+    def test_set_heat_mode_arctech_profile(self) -> None:
+        """ARCTECH devices use explicit heat on/off and level toggle commands."""
+
+        @dataclass
+        class Spec:
+            descr: str
+            current_mode: HeatMode
+            new_mode: HeatMode
+            exp_mode: HeatMode
+            exp_commands: list[bytes]
+
+        specs = [
+            Spec(
+                descr="OFF -> LOW",
+                current_mode=HeatMode.OFF,
+                new_mode=HeatMode.LOW,
+                exp_mode=HeatMode.LOW,
+                exp_commands=[
+                    ARCTECH_PROFILE.heat_on,
+                    Command.SET_THERMOSTAT.value + bytes([THERMOSTAT_MIN]),
+                ],
+            ),
+            Spec(
+                descr="OFF -> HIGH",
+                current_mode=HeatMode.OFF,
+                new_mode=HeatMode.HIGH,
+                exp_mode=HeatMode.HIGH,
+                exp_commands=[
+                    ARCTECH_PROFILE.heat_on,
+                    Command.SET_THERMOSTAT.value + bytes([THERMOSTAT_MIN]),
+                    ARCTECH_PROFILE.heat_toggle_level,
+                ],
+            ),
+            Spec(
+                descr="LOW -> HIGH",
+                current_mode=HeatMode.LOW,
+                new_mode=HeatMode.HIGH,
+                exp_mode=HeatMode.HIGH,
+                exp_commands=[ARCTECH_PROFILE.heat_toggle_level],
+            ),
+            Spec(
+                descr="HIGH -> LOW",
+                current_mode=HeatMode.HIGH,
+                new_mode=HeatMode.LOW,
+                exp_mode=HeatMode.LOW,
+                exp_commands=[ARCTECH_PROFILE.heat_toggle_level],
+            ),
+            Spec(
+                descr="LOW -> OFF",
+                current_mode=HeatMode.LOW,
+                new_mode=HeatMode.OFF,
+                exp_mode=HeatMode.OFF,
+                exp_commands=[ARCTECH_PROFILE.heat_off],
+            ),
+            Spec(
+                descr="HIGH -> OFF",
+                current_mode=HeatMode.HIGH,
+                new_mode=HeatMode.OFF,
+                exp_mode=HeatMode.OFF,
+                exp_commands=[ARCTECH_PROFILE.heat_off],
+            ),
+            Spec(
+                descr="LOW -> LOW",
+                current_mode=HeatMode.LOW,
+                new_mode=HeatMode.LOW,
+                exp_mode=HeatMode.LOW,
+                exp_commands=[],
+            ),
+        ]
+
+        for spec in specs:
+            with self.subTest(spec.descr):
+                ble_device = self._ble_device_mock()
+                device = Device(ble_device)
+                device._command_profile = ARCTECH_PROFILE
+                device._state.is_powered_on = True
+                device._state.heat_mode = spec.current_mode
+
+                client_stub = self._bleak_client_stub()
+                client_stub.write_gatt_char = AsyncMock()
+
+                device._connection = client_stub
+                device._is_connected = True
+
+                async def run_set_heat_mode():
+                    await device.set_heat_mode(spec.new_mode)
+                    self.assertEqual(device.heat_mode, spec.exp_mode)
+
+                asyncio.run(run_set_heat_mode())
 
                 client_stub.write_gatt_char.assert_has_awaits(
                     [
@@ -652,6 +792,22 @@ class TestDevice(unittest.TestCase):
                     ]
 
                     client_stub.write_gatt_char.assert_has_awaits(expCalls)
+
+    def test_detect_command_profile_arctech(self) -> None:
+        """ARCTECH devices use the ARCTECH command profile."""
+        device = Device(self._ble_device_mock())
+        device._manufacturer = "ARCTECH"
+        device._model_number = "FOTH"
+
+        self.assertEqual(device._detect_command_profile(), ARCTECH_PROFILE)
+
+    def test_detect_command_profile_default(self) -> None:
+        """Non-ARCTECH devices use the NITRAFlame command profile."""
+        device = Device(self._ble_device_mock())
+        device._manufacturer = "Test Manufacturer"
+        device._model_number = "Test Model"
+
+        self.assertEqual(device._detect_command_profile(), NITRAFLAME_PROFILE)
 
     def _ble_device_mock(self) -> BLEDevice:
         """Create a mock BLE device for use in tests."""

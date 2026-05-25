@@ -12,7 +12,7 @@ from bleak_retry_connector import BleakClient  # type: ignore
 from bleak_retry_connector import establish_connection
 
 from .const import (
-    ARCTECH_FOTH_PROFILE,
+    ARCTECH_PROFILE,
     DEVICE_RESPONSE_TIMEOUT_SECONDS,
     NITRAFLAME_PROFILE,
     SUPPORTED_DEVICE_NAMES,
@@ -69,10 +69,9 @@ class Device:
     def _detect_command_profile(self) -> CommandProfile:
         """Detect the command profile for the connected device."""
         manufacturer = self._manufacturer.strip().upper()
-        model_number = self._model_number.strip().upper()
 
-        if manufacturer == "ARCTECH" and model_number in {"FOTH", "F0TH"}:
-            return ARCTECH_FOTH_PROFILE
+        if manufacturer == "ARCTECH":
+            return ARCTECH_PROFILE
 
         return NITRAFLAME_PROFILE
 
@@ -330,6 +329,9 @@ class Device:
         if old_value == HeatMode.OFF:
             self._state.heat_mode = HeatMode.LOW
             await self._send_cmd(profile.heat_on)
+            await self._send_cmd(
+                Command.SET_THERMOSTAT.value + bytes([self._state.thermostat])
+            )
 
         if mode == HeatMode.HIGH and self._state.heat_mode != HeatMode.HIGH:
             self._state.heat_mode = HeatMode.HIGH
