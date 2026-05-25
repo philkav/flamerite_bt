@@ -310,6 +310,46 @@ class Device:
                 )
         return cmds
 
+    async def _set_heat_mode_with_explicit_commands(
+        self, mode: HeatMode
+    ) -> None:
+        """Set heat mode using explicit heat on/off and level toggle commands."""
+        old_value = self._state.heat_mode
+
+        # Only send commands if the heat mode has changed.
+        if old_value == mode:
+            return
+
+        profile = self._command_profile
+
+        if mode == HeatMode.OFF:
+            self._state.heat_mode = HeatMode.OFF
+            await self._send_cmd(profile.heat_off)
+            return
+
+        if old_value == HeatMode.OFF:
+            self._state.heat_mode = HeatMode.LOW
+            await self._send_cmd(profile.heat_on)
+
+        if mode == HeatMode.HIGH and self._state.heat_mode != HeatMode.HIGH:
+            self._state.heat_mode = HeatMode.HIGH
+            await self._send_cmd(profile.heat_toggle_level)
+            return
+
+        if mode == HeatMode.LOW and self._state.heat_mode == HeatMode.HIGH:
+            self._state.heat_mode = HeatMode.LOW
+            await self._send_cmd(profile.heat_toggle_level)
+
+    @property
+    def _has_explicit_heat_commands(self) -> bool:
+        """Return true if the current profile has explicit heat commands."""
+        profile = self._command_profile
+        return (
+            profile.heat_on is not None
+            and profile.heat_off is not None
+            and profile.heat_toggle_level is not None
+        )
+
     async def set_heat_mode(self, mode: HeatMode) -> None:
         """Set the heat mode."""
         if not self._is_connected:
@@ -321,6 +361,10 @@ class Device:
                 _LOGGER.warning(
                     "Cannot set heat mode when device is powered off"
                 )
+                return
+
+            if self._has_explicit_heat_commands:
+                await self._set_heat_mode_with_explicit_commands(mode)
                 return
 
             old_value = self._state.heat_mode

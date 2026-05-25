@@ -105,6 +105,11 @@ class CommandProfile:
     power_on: bytes | None
     power_off: bytes | None
     power_toggle: bytes | None
+    heat_on: bytes | None = None
+    heat_off: bytes | None = None
+    heat_toggle_level: bytes | None = None
+    flicker_on: bytes | None = None
+    flicker_off: bytes | None = None
     accepts_short_ack_state: bool = False
 
 
@@ -120,6 +125,11 @@ ARCTECH_FOTH_PROFILE = CommandProfile(
     power_on=bytes.fromhex("a101ff"),
     power_off=bytes.fromhex("a10100"),
     power_toggle=None,
+    heat_on=bytes.fromhex("a10101"),
+    heat_off=bytes.fromhex("a10102"),
+    heat_toggle_level=bytes.fromhex("a10103"),
+    flicker_on=bytes.fromhex("a10108"),
+    flicker_off=bytes.fromhex("a10109"),
     accepts_short_ack_state=True,
 )
 
