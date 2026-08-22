@@ -33,7 +33,7 @@ class Device:
 
     _ble_device: BLEDevice
     _command_profile: CommandProfile
-    _connection: BleakClient
+    _connection: BleakClient | None
     _connection_lock = asyncio.Lock()
     _is_connected: bool
     _mac: str
@@ -49,6 +49,7 @@ class Device:
     def __init__(self, ble_device: BLEDevice) -> None:
         self._ble_device = ble_device
         self._command_profile = NITRAFLAME_PROFILE
+        self._connection = None
         self._is_connected = False
         self._mac = ble_device.address
         self._name = ble_device.name or ""
@@ -75,9 +76,13 @@ class Device:
 
         return NITRAFLAME_PROFILE
 
-    def disconnected_callback(self, client):  # pylint: disable=unused-argument
+    def disconnected_callback(self, client: BleakClient) -> None:
         """Handle disconnection events."""
 
+        if client is not self._connection:
+            return
+
+        self._connection = None
         self._is_connected = False
         _LOGGER.warning("Disconnected from %s", self._mac)
 
@@ -88,10 +93,11 @@ class Device:
             return
 
         async with self._connection_lock:
+            connection = None
             try:
                 _LOGGER.debug("Connecting to %s", self._mac)
 
-                self._connection = await establish_connection(
+                connection = await establish_connection(
                     client_class=BleakClient,
                     device=self._ble_device,
                     name=self._mac,
@@ -100,6 +106,7 @@ class Device:
                     use_services_cache=True,
                 )
 
+                self._connection = connection
                 self._is_connected = True
 
                 self._model_number = await self._read_attr(
@@ -141,16 +148,47 @@ class Device:
                     DeviceAttribute.CMD_RESPONSE.value, self._on_notify
                 )
             except BleakError as ex:
+                if connection is not None:
+                    await self._disconnect_after_failed_setup(connection)
+                else:
+                    self._connection = None
+                    self._is_connected = False
                 _LOGGER.error("Failed to connect to %s: %s", self._mac, ex)
-                self._is_connected = False
+            except BaseException:
+                if connection is not None:
+                    await self._disconnect_after_failed_setup(connection)
+                else:
+                    self._connection = None
+                    self._is_connected = False
+                raise
+
+    async def _disconnect_after_failed_setup(
+        self, connection: BleakClient
+    ) -> None:
+        """Disconnect and clear a client after setup fails."""
+        try:
+            await connection.disconnect()
+        except Exception as ex:
+            _LOGGER.warning(
+                "Failed to disconnect from %s after setup failure: %s",
+                self._mac,
+                ex,
+            )
+        finally:
+            self._connection = None
+            self._is_connected = False
 
     async def disconnect(self) -> None:
         """Disconnect the device."""
-        if not self._is_connected:
+        connection = self._connection
+        if not self._is_connected or connection is None:
             return
 
-        await self._connection.disconnect()
-        self._is_connected = False
+        try:
+            await connection.disconnect()
+        finally:
+            self._connection = None
+            self._is_connected = False
         _LOGGER.debug("Disconnected from %s", self._mac)
 
     def update_ble_device(self, ble_device: BLEDevice) -> None:

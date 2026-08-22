@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock, call, patch
 from attr import dataclass
 from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.backends.device import BLEDevice
+from bleak.exc import BleakError
 from bleak_retry_connector import BleakClient  # type: ignore
 from bleak_retry_connector import establish_connection
 
@@ -22,6 +23,33 @@ from flamerite_bt.device import Device
 
 
 class TestDevice(unittest.TestCase):
+    def test_connect_ignores_invalid_utf8(self) -> None:
+        """Invalid bytes in a device attribute do not stop setup."""
+        device = Device(self._ble_device_mock())
+        client_stub = self._bleak_client_stub()
+
+        def read_attr(uuid: str) -> bytes:
+            if uuid == DeviceAttribute.SERIAL_NUMBER.value:
+                return b"AB\x8f12\x00"
+            return self._read_attr_side_effect(uuid)
+
+        client_stub.read_gatt_char = AsyncMock(side_effect=read_attr)
+        connect_stub = AsyncMock(
+            spec=establish_connection, return_value=client_stub
+        )
+
+        with patch(
+            "flamerite_bt.device.establish_connection", new=connect_stub
+        ):
+
+            async def run_connect():
+                await device.connect()
+                self.assertTrue(device.is_connected)
+                self.assertEqual(device.serial_number, "AB12")
+                await device.disconnect()
+
+            asyncio.run(run_connect())
+
     def test_connect(self) -> None:
         ble_device = self._ble_device_mock()
         device = Device(ble_device)
@@ -49,6 +77,78 @@ class TestDevice(unittest.TestCase):
                 self.assertFalse(device.is_connected)
 
             asyncio.run(run_connect())
+
+    def test_connect_cleans_up_when_metadata_read_fails(self) -> None:
+        """A failed metadata read leaves no connected client behind."""
+        errors = [
+            UnicodeDecodeError("utf-8", b"\x8f", 0, 1, "invalid start byte"),
+            RuntimeError("metadata read failed"),
+            asyncio.CancelledError(),
+        ]
+
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                device = Device(self._ble_device_mock())
+                client_stub = self._bleak_client_stub()
+
+                def read_attr(uuid: str) -> bytes:
+                    if uuid == DeviceAttribute.SERIAL_NUMBER.value:
+                        raise error
+                    return self._read_attr_side_effect(uuid)
+
+                client_stub.read_gatt_char = AsyncMock(side_effect=read_attr)
+                connect_stub = AsyncMock(
+                    spec=establish_connection, return_value=client_stub
+                )
+                with patch(
+                    "flamerite_bt.device.establish_connection", new=connect_stub
+                ):
+
+                    async def run_connect():
+                        with self.assertRaises(type(error)):
+                            await device.connect()
+
+                    asyncio.run(run_connect())
+
+                self.assertFalse(device.is_connected)
+                client_stub.disconnect.assert_awaited_once()
+                client_stub.start_notify.assert_not_awaited()
+
+    def test_connect_cleans_up_after_bleak_error(self) -> None:
+        """A Bleak setup error leaves no connected client behind."""
+        device = Device(self._ble_device_mock())
+        client_stub = self._bleak_client_stub()
+
+        def read_attr(uuid: str) -> bytes:
+            if uuid == DeviceAttribute.SERIAL_NUMBER.value:
+                raise BleakError("metadata read failed")
+            return self._read_attr_side_effect(uuid)
+
+        client_stub.read_gatt_char = AsyncMock(side_effect=read_attr)
+        connect_stub = AsyncMock(
+            spec=establish_connection, return_value=client_stub
+        )
+        with patch(
+            "flamerite_bt.device.establish_connection", new=connect_stub
+        ):
+            asyncio.run(device.connect())
+
+        self.assertFalse(device.is_connected)
+        client_stub.disconnect.assert_awaited_once()
+        client_stub.start_notify.assert_not_awaited()
+
+    def test_disconnected_callback_ignores_a_stale_client(self) -> None:
+        """A stale callback cannot clear a newer connection."""
+        device = Device(self._ble_device_mock())
+        current_client = self._bleak_client_stub()
+        stale_client = self._bleak_client_stub()
+        device._connection = current_client
+        device._is_connected = True
+
+        device.disconnected_callback(stale_client)
+
+        self.assertIs(device._connection, current_client)
+        self.assertTrue(device.is_connected)
 
     def test_query_state(self) -> None:
         ble_device = self._ble_device_mock()
